@@ -281,14 +281,10 @@ def load_prompt_from_docx(filepath, fallback):
 
 
 def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
-    """Invoke the LLM API with a 120-second timeout.
-
-    Reads API credentials from st.session_state. Raises ValueError when
-    required configuration is missing.
-    """
+    """Invoke the LLM API."""
     api_key = st.session_state.get("api_key", "").strip()
     base_url = st.session_state.get("base_url", "").strip()
-    model = st.session_state.get("model", "gpt-3.5-turbo").strip()
+    model = st.session_state.get("model", "deepseek-ai/DeepSeek-V4-Pro").strip()
 
     if not api_key:
         raise ValueError("Please configure your API Key in the sidebar.")
@@ -297,16 +293,10 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
     if not model:
         raise ValueError("Please configure the Model Name in the sidebar.")
 
-    # 创建 HTTP 客户端，设置超时
-    import httpx
-    http_client = httpx.Client(
-        timeout=httpx.Timeout(120.0, connect=60.0),
-    )
-
+    # 硅基流动兼容模式
     client = OpenAI(
         api_key=api_key,
         base_url=base_url,
-        http_client=http_client,
     )
 
     response = client.chat.completions.create(
@@ -317,8 +307,6 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
         ],
         temperature=0.7,
         max_tokens=4096,
-        # timeout 在这里设置，而不是在 OpenAI() 中
-        timeout=httpx.Timeout(120.0, connect=60.0),
     )
 
     return response.choices[0].message.content
