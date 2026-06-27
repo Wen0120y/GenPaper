@@ -1,5 +1,5 @@
 """
-GenPaper — AI-Powered Research Assistant
+ACTA — AI-Powered Research Assistant
 ============================================
 A Streamlit web application for scientific question synthesis
 and academic paper framework design.
@@ -15,7 +15,7 @@ from docx import Document
 
 # ==================== Page Configuration ====================
 st.set_page_config(
-    page_title="GenPaper · Research Assistant",
+    page_title="ACTA · Research Assistant",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -58,6 +58,14 @@ st.markdown(
 
     div[role="radiogroup"] label:hover {
         background: #e2e8f0 !important;
+    }
+
+    /* Hide radio indicators */
+    div[role="radiogroup"] label > div:first-child {
+        display: none !important;
+    }
+    div[role="radiogroup"] label {
+        padding-left: 14px !important;
     }
 
     /* --- Hero-style page titles --- */
@@ -139,16 +147,6 @@ st.markdown(
         margin: 32px 0;
     }
 
-    /* --- Result card --- */
-    .result-card {
-        background: #ffffff;
-        border-radius: 8px;
-        padding: 32px 36px;
-        margin: 24px 0;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-    }
-
     /* --- Question blocks (page 1) --- */
     .question-block {
         background: #f8fafc;
@@ -202,6 +200,8 @@ st.markdown(
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPT_FILE_PAGE1 = os.path.join(APP_DIR, "prompts_page1.docx")
 PROMPT_FILE_PAGE2 = os.path.join(APP_DIR, "prompts_page2.docx")
+PROMPT_FILE_PAGE3 = os.path.join(APP_DIR, "prompts_page3.docx")
+PROMPT_FILE_PAGE4 = os.path.join(APP_DIR, "prompts_page4.docx")
 
 # Default prompt templates (auto-created as .docx on first run)
 DEFAULT_PROMPT_PAGE1 = (
@@ -210,13 +210,11 @@ DEFAULT_PROMPT_PAGE1 = (
     "For each question, provide:\n"
     "1. The question itself (beginning with 'How', 'In what ways', "
     "or 'To what extent')\n"
-    "2. A set of associated keywords that characterize the research direction\n"
-    "3. A set of extended keywords derived from the user's input, "
+    "2. A set of extended keywords derived from the user's input, "
     "broadening the research scope\n\n"
     "Format each question as:\n"
     "---QUESTION---\n"
     "Q: [question text]\n"
-    "KEYWORDS: [comma-separated keywords]\n"
     "EXTENDED: [comma-separated extended keywords]\n"
     "---END---"
 )
@@ -241,6 +239,66 @@ SYSTEM_PROMPT = (
     "Provide rigorous, insightful, and well-structured academic output. "
     "Always follow the requested format precisely."
 )
+
+DEFAULT_PROMPT_PAGE3 = (
+    "You are helping a researcher draft the Introduction section of an academic paper. "
+    "Based on the topic description below, generate key argument sentences "
+    "(thesis statements) for each of the four standard Introduction paragraphs.\n\n"
+    "Topic: {topic}\n\n"
+    "Structure your output into exactly four labeled sections:\n\n"
+    "**Paragraph 1 — Broad Background & Scientific Problem:**\n"
+    "Provide 2–3 key thesis sentences that establish the research domain, "
+    "its importance, and the core scientific gap. "
+    "Where a claim would normally be backed by a reference, insert a placeholder "
+    "in exactly this format: [可插入XX类型文献以强化“xxx”论证] "
+    "where 'XX类型文献' describes the reference type needed "
+    "(e.g., 综述/原创研究/方法论文/基准数据集) "
+    "and 'xxx' is a 3–8 word summary of the specific claim to support.\n\n"
+    "**Paragraph 2 — Existing Research:**\n"
+    "Provide 3–4 key thesis sentences summarizing the landscape of existing work. "
+    "Use citation placeholders as described above at every point where "
+    "a reference is expected.\n\n"
+    "**Paragraph 3 — Limitations of Existing Techniques:**\n"
+    "Provide 2–3 key thesis sentences critically analyzing gaps and shortcomings "
+    "in prior work. Use citation placeholders where specific limitations "
+    "are attributed to existing studies.\n\n"
+    "**Paragraph 4 — Our Contribution:**\n"
+    "Provide 2–3 key thesis sentences stating the novel approach and "
+    "contributions of this paper. Use placeholders only where absolutely necessary "
+    "(e.g., referencing baseline methods for comparison).\n\n"
+    "CRITICAL RULES:\n"
+    "- Output ONLY thesis/argument sentences — do NOT write full paragraphs.\n"
+    "- Every citation-requiring claim MUST use the placeholder format exactly:\n"
+    "  [可插入XX类型文献以强化“xxx”论证]\n"
+    "- Fill 'XX类型文献' and 'xxx' with context-appropriate content.\n"
+    "- Do NOT invent any real or fake paper titles, author names, or DOIs.\n"
+    "- Do NOT perform any literature search.\n"
+    "- Use formal academic English throughout.\n"
+    "- Output only the content — no meta-commentary."
+)
+
+
+DEFAULT_PROMPT_PAGE4 = (
+    "# About ACTA\n\n"
+    "ACTA (ACademic Trash fActory) is an AI-powered research writing assistant "
+    "designed to help researchers draft and refine academic papers.\n\n"
+    "## Features\n\n"
+    "- **Scientific Question Synthesis** — Generate forward-looking research questions from keywords\n"
+    "- **Academic Framework Architect** — Build structured paper outlines with hierarchical chapters\n"
+    "- **Introduction Generator** — Draft key thesis sentences for Introduction sections with citation placeholders\n\n"
+    "## How to Use\n\n"
+    "1. Configure your API key and model in the sidebar\n"
+    "2. Navigate to the desired tool page\n"
+    "3. Enter your research topic or keywords\n"
+    "4. Click **Generate** to get AI-assisted output\n\n"
+    "## Prompt Customization\n\n"
+    "Each tool page is backed by a Word document (`.docx`) in the project folder. "
+    "Edit these files to customize the prompts and fine-tune the output format.\n\n"
+    "## Contact\n\n"
+    "For questions or feedback, please reach out to the project maintainer."
+)
+
+
 
 
 # ==================== Helper Functions ====================
@@ -281,10 +339,14 @@ def load_prompt_from_docx(filepath, fallback):
 
 
 def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
-    """Invoke the LLM API."""
+    """Invoke the LLM API with a 120-second timeout.
+
+    Reads API credentials from st.session_state. Raises ValueError when
+    required configuration is missing.
+    """
     api_key = st.session_state.get("api_key", "").strip()
     base_url = st.session_state.get("base_url", "").strip()
-    model = st.session_state.get("model", "deepseek-ai/DeepSeek-V4-Pro").strip()
+    model = st.session_state.get("model", "gpt-3.5-turbo").strip()
 
     if not api_key:
         raise ValueError("Please configure your API Key in the sidebar.")
@@ -293,10 +355,16 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
     if not model:
         raise ValueError("Please configure the Model Name in the sidebar.")
 
-    # 硅基流动兼容模式
+    # 创建 HTTP 客户端，设置超时
+    import httpx
+    http_client = httpx.Client(
+        timeout=httpx.Timeout(120.0, connect=60.0),
+    )
+
     client = OpenAI(
         api_key=api_key,
         base_url=base_url,
+        http_client=http_client,
     )
 
     response = client.chat.completions.create(
@@ -307,6 +375,8 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
         ],
         temperature=0.7,
         max_tokens=4096,
+        # timeout 在这里设置，而不是在 OpenAI() 中
+        timeout=httpx.Timeout(120.0, connect=60.0),
     )
 
     return response.choices[0].message.content
@@ -436,7 +506,12 @@ with st.sidebar:
     # Hero-style branding — prominent site title
     st.markdown(
         '<div style="font-size:50px; font-weight:800; color:#0f172a; '
-        'letter-spacing:-0.02em; margin-bottom:2px;">GenPaper</div>',
+        'letter-spacing:-0.02em; margin-bottom:0px;">ACTA</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="font-size:13px; color:#94a3b8; font-style:italic; '
+        'letter-spacing:0.05em; margin-bottom:2px;">ACademic Trash fActory</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -452,6 +527,8 @@ with st.sidebar:
         [
             "🔬 Scientific Question Synthesis",
             "📐 Academic Framework Architect",
+            "📝 Introduction Generator",
+            "ℹ️ About ACTA",
         ],
         label_visibility="collapsed",
     )
@@ -487,7 +564,7 @@ with st.sidebar:
         st.session_state["model"] = model
 
     st.markdown("---")
-    st.caption("GenPaper v1.0  ·  Research Assistant")
+    st.caption("ACTA v1.0  ·  Research Assistant")
 
 
 # ==================== Page 1: Scientific Question Synthesis ====================
@@ -530,7 +607,7 @@ if page == "🔬 Scientific Question Synthesis":
             st.warning("⚠️ Please enter at least one research keyword.")
         else:
             try:
-                with st.spinner("GenPaper is thinking ..."):
+                with st.spinner("ACTA is thinking ..."):
                     prompt_template = load_prompt_from_docx(
                         PROMPT_FILE_PAGE1, DEFAULT_PROMPT_PAGE1
                     )
@@ -540,6 +617,8 @@ if page == "🔬 Scientific Question Synthesis":
 
                     raw_result = call_llm(final_prompt)
                     questions = parse_questions(raw_result)
+                    st.session_state["page1_questions"] = questions
+                    st.session_state["page1_keywords"] = keywords.strip()
 
                 if not questions:
                     st.warning(
@@ -549,20 +628,11 @@ if page == "🔬 Scientific Question Synthesis":
                     st.text(raw_result)
                 else:
                     st.markdown(
-                        '<div class="result-card">',
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
                         "### 📝 Synthesized Questions "
                         f"({len(questions)} results)"
                     )
-                    st.markdown("---")
 
                     for i, q in enumerate(questions, 1):
-                        kw_tags = "".join(
-                            f'<span class="kw-tag">{k}</span>'
-                            for k in q["keywords"]
-                        )
                         ex_tags = "".join(
                             f'<span class="kw-tag extended">{k}</span>'
                             for k in q["extended"]
@@ -574,16 +644,12 @@ if page == "🔬 Scientific Question Synthesis":
                             f"<strong>Q{i}:</strong> {q['question']}"
                             f"</div>"
                             f'<div class="q-keywords">'
-                            f"<strong>Keywords:</strong> {kw_tags}"
-                            f"</div>"
-                            f'<div class="q-keywords">'
-                            f"<strong>Extended:</strong> {ex_tags}"
+                            f"<strong>Extended Keywords:</strong> {ex_tags}"
                             f"</div>"
                             f"</div>",
                             unsafe_allow_html=True,
                         )
 
-                    st.markdown("</div>", unsafe_allow_html=True)
                     st.success(
                         f"✅ Successfully synthesized "
                         f"{len(questions)} research questions!"
@@ -600,6 +666,151 @@ if page == "🔬 Scientific Question Synthesis":
                     "- Confirm the model name exists\n"
                     "- Ensure network connectivity is stable"
                 )
+
+    # Show cached results when returning to this page
+    if "page1_questions" in st.session_state and not generate_btn:
+        questions = st.session_state["page1_questions"]
+        if questions:
+            st.markdown("### Synthesized Questions (cached) " + str(len(questions)) + " results")
+            for i, q in enumerate(questions, 1):
+                ex_tags = "".join("<span class=kw-tag extended>" + k + "</span>" for k in q["extended"])
+                st.markdown(
+                    "<div class=question-block>" +
+                    "<div class=q-title><strong>Q" + str(i) + ":</strong> " + q["question"] + "</div>" +
+                    "<div class=q-keywords><strong>Extended Keywords:</strong> " + ex_tags + "</div>" +
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+
+
+# ==================== Page 3: Introduction Generator ====================
+elif page == "📝 Introduction Generator":
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    st.markdown(
+        '<div class="page-hero">📝 Introduction Generator</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="page-tagline">'
+        "Describe your research topic and AI will generate a well-structured "
+        "academic Introduction section with background, literature review, "
+        "limitations, and contributions."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Input area
+    topic_description = st.text_area(
+        "Research Topic Description",
+        placeholder=(
+            "Describe your paper’s research topic, key ideas, methodology, "
+            "and contributions in detail. The more context you provide, "
+            "the better the generated Introduction will be.\n\n"
+            "e.g. This paper proposes a novel deep learning framework for "
+            "real-time traffic flow prediction using graph neural networks "
+            "and attention mechanisms..."
+        ),
+        help="Provide a comprehensive description of your research topic (max ~500 words)",
+        max_chars=4000,
+        height=200,
+        key="topic_description_input",
+    )
+
+    col_left, col_right = st.columns([1, 2])
+    with col_left:
+        generate_btn = st.button(
+            "Generate",
+            type="primary",
+            use_container_width=True,
+            key="generate_intro_btn",
+        )
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    if generate_btn:
+        if not topic_description.strip():
+            st.warning("⚠️ Please enter a research topic description.")
+        else:
+            try:
+                with st.spinner("ACTA is writing the Introduction ..."):
+                    prompt_template = load_prompt_from_docx(
+                        PROMPT_FILE_PAGE3, DEFAULT_PROMPT_PAGE3
+                    )
+                    final_prompt = prompt_template.replace(
+                        "{topic}", topic_description.strip()
+                    )
+
+                    raw_result = call_llm(final_prompt)
+                    st.session_state["page3_intro"] = raw_result
+
+
+                    st.markdown("### 📄 Generated Introduction")
+                    # Render the introduction as Markdown
+                    st.markdown(raw_result)
+                    st.success("✅ Introduction generated successfully!")
+
+            except ValueError as e:
+                st.error(f"❌ Configuration Error: {e}")
+            except Exception as e:
+                st.error(
+                    f"❌ API Call Failed: {e}\n\n"
+                    "Troubleshooting:\n"
+                    "- Verify your API Key is correct\n"
+                    "- Check that the Base URL is reachable\n"
+                    "- Confirm the model name exists\n"
+                    "- Ensure network connectivity is stable"
+                )
+
+    # Show cached results when returning to this page
+    if "page3_intro" in st.session_state and not generate_btn:
+        st.markdown("### Generated Introduction (cached)")
+        st.markdown(st.session_state["page3_intro"])
+
+
+
+
+# ==================== Page 4: About ACTA ====================
+elif page == "ℹ️ About ACTA":
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # Load content from the about Word document or Markdown file
+    about_content = load_prompt_from_docx(
+        PROMPT_FILE_PAGE4, DEFAULT_PROMPT_PAGE4
+    )
+
+    # Render as Markdown for proper formatting
+    st.markdown(about_content)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # Display QR code image if present in project directory
+    qr_paths = []
+    for fname in ["QRcode.png", "QRcode.jpg"]:
+        candidate = os.path.join(APP_DIR, fname)
+        if os.path.exists(candidate):
+            qr_paths.append(candidate)
+
+    if qr_paths:
+        st.markdown(
+            '<p style="text-align:center; color:#64748b; '
+            'font-size:13px; margin-top:32px;">— — —</p>',
+            unsafe_allow_html=True,
+        )
+        for qr_path in qr_paths:
+            st.image(qr_path, width=180)
+    else:
+        st.markdown(
+            '<p style="text-align:center; color:#94a3b8; '
+            'font-size:12px; margin-top:24px;">'
+            '(Place QRcode.png or QRcode.jpg in the project folder to display here)'
+            '</p>',
+            unsafe_allow_html=True,
+        )
+
 
 
 # ==================== Page 2: Academic Framework Architect ====================
@@ -667,7 +878,7 @@ elif page == "📐 Academic Framework Architect":
             st.warning("⚠️ Please enter a paper title.")
         else:
             try:
-                with st.spinner("GenPaper is designing the framework ..."):
+                with st.spinner("ACTA is designing the framework ..."):
                     prompt_template = load_prompt_from_docx(
                         PROMPT_FILE_PAGE2, DEFAULT_PROMPT_PAGE2
                     )
@@ -683,16 +894,12 @@ elif page == "📐 Academic Framework Architect":
 
                     raw_result = call_llm(final_prompt)
                     rendered_html = render_framework_markdown(raw_result)
+                    st.session_state["page2_framework"] = rendered_html
 
-                st.markdown(
-                    '<div class="result-card">',
-                    unsafe_allow_html=True,
-                )
-                st.markdown("### 📋 Paper Outline")
-                st.markdown("---")
-                st.markdown(rendered_html, unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                st.success("✅ Framework generated successfully!")
+
+                    st.markdown("### 📋 Paper Outline")
+                    st.markdown(rendered_html, unsafe_allow_html=True)
+                    st.success("✅ Framework generated successfully!")
 
             except ValueError as e:
                 st.error(f"❌ Configuration Error: {e}")
@@ -705,3 +912,8 @@ elif page == "📐 Academic Framework Architect":
                     "- Confirm the model name exists\n"
                     "- Ensure network connectivity is stable"
                 )
+
+    # Show cached results when returning to this page
+    if "page2_framework" in st.session_state and not generate_btn:
+        st.markdown("### Paper Outline (cached)")
+        st.markdown(st.session_state["page2_framework"], unsafe_allow_html=True)
