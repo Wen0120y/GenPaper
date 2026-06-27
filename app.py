@@ -284,7 +284,7 @@ DEFAULT_PROMPT_PAGE4 = (
     "designed to help researchers draft and refine academic papers.\n\n"
     "## Features\n\n"
     "- **Scientific Question Synthesis** — Generate forward-looking research questions from keywords\n"
-    "- **Academic Framework Architect** — Build structured paper outlines with hierarchical chapters\n"
+    "- **Framework Architect** — Build structured paper outlines with hierarchical chapters\n"
     "- **Introduction Generator** — Draft key thesis sentences for Introduction sections with citation placeholders\n\n"
     "## How to Use\n\n"
     "1. Configure your API key and model in the sidebar\n"
@@ -526,7 +526,7 @@ with st.sidebar:
         "Navigation",
         [
             "🔬 Scientific Question Synthesis",
-            "📐 Academic Framework Architect",
+            "📐 Framework Architect",
             "📝 Introduction Generator",
             "ℹ️ About ACTA",
         ],
@@ -813,14 +813,14 @@ elif page == "ℹ️ About ACTA":
 
 
 
-# ==================== Page 2: Academic Framework Architect ====================
-elif page == "📐 Academic Framework Architect":
+# ==================== Page 2: Framework Architect ====================
+elif page == "📐 Framework Architect":
     # Prevent the Streamlit toolbar from overlapping the hero title
     st.markdown("<br>", unsafe_allow_html=True)
 
     st.markdown(
         '<div class="page-hero">'
-        "📐 Academic Framework Architect</div>",
+        "📐 Framework Architect</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
