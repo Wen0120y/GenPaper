@@ -12,6 +12,9 @@ import os
 import re
 from openai import OpenAI
 from docx import Document
+from openpyxl import load_workbook
+import msoffcrypto
+import io
 
 # ==================== Page Configuration ====================
 st.set_page_config(
@@ -338,18 +341,78 @@ def load_prompt_from_docx(filepath, fallback):
         return fallback
 
 
+def load_user_key_credentials(user_key_input):
+    """Look up a 10-digit user key in the local password-protected Excel file.
+
+    The Excel file is encrypted with password "980120".
+    Returns (api_key, base_url, model) if the key is found,
+    or (None, None, None) if not found / file missing.
+    """
+    excel_path = os.path.join(APP_DIR, "user_keys.xlsx")
+    if not os.path.exists(excel_path):
+        return None, None, None
+
+    user_key_input = str(user_key_input).strip()
+    if len(user_key_input) != 10 or not user_key_input.isdigit():
+        return None, None, None
+
+    EXCEL_PASSWORD = "980120"
+
+    try:
+        # Decrypt the password-protected Excel into memory
+        decrypted = io.BytesIO()
+        with open(excel_path, "rb") as f:
+            office_file = msoffcrypto.OfficeFile(f)
+            office_file.load_key(password=EXCEL_PASSWORD)
+            office_file.decrypt(decrypted)
+        decrypted.seek(0)
+
+        wb = load_workbook(decrypted, read_only=True)
+        ws = wb.active
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                continue
+            stored_key = str(row[0]).strip()
+            if stored_key == user_key_input:
+                api_key = str(row[1]).strip() if row[1] else None
+                base_url = str(row[2]).strip() if row[2] else None
+                model = str(row[3]).strip() if len(row) > 3 and row[3] else None
+                wb.close()
+                return api_key, base_url, model
+        wb.close()
+    except Exception:
+        pass
+    return None, None, None
+
+
+
+
 def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
     """Invoke the LLM API with a 120-second timeout.
 
     Reads API credentials from st.session_state. Raises ValueError when
     required configuration is missing.
     """
-    api_key = st.session_state.get("api_key", "").strip()
-    base_url = st.session_state.get("base_url", "").strip()
-    model = st.session_state.get("model", "gpt-3.5-turbo").strip()
+    # Check for user key override
+    user_key = st.session_state.get("user_key", "").strip()
+    if user_key:
+        uk_api_key, uk_base_url, uk_model = load_user_key_credentials(user_key)
+        if uk_api_key:
+            api_key = uk_api_key
+            base_url = uk_base_url or "https://api.siliconflow.cn/v1"
+            model = uk_model or "deepseek-ai/DeepSeek-V4-Pro"
+        else:
+            # User key provided but invalid
+            raise ValueError(
+                "Invalid User Key. Please check your 10-digit key or contact the administrator."
+            )
+    else:
+        api_key = st.session_state.get("api_key", "").strip()
+        base_url = st.session_state.get("base_url", "").strip()
+        model = st.session_state.get("model", "gpt-3.5-turbo").strip()
 
     if not api_key:
-        raise ValueError("Please configure your API Key in the sidebar.")
+        raise ValueError("Please configure your API Key or User Key in the sidebar.")
     if not base_url:
         raise ValueError("Please configure the API Base URL in the sidebar.")
     if not model:
@@ -537,6 +600,22 @@ with st.sidebar:
 
     # API configuration (collapsible)
     with st.expander("⚙️ API Configuration", expanded=False):
+        user_key = st.text_input(
+            "User Key",
+            type="password",
+            value=st.session_state.get("user_key", ""),
+            placeholder="10-digit key (if provided)",
+            help="Enter a 10-digit user key to use the internal API. Leave blank to use your own API Key below.",
+        )
+        st.session_state["user_key"] = user_key
+
+        st.markdown(
+            '<p style="font-size:11px; color:#94a3b8; margin:-10px 0 10px 0;">'
+            "— OR —"
+            "</p>",
+            unsafe_allow_html=True,
+        )
+
         api_key = st.text_input(
             "API Key",
             type="password",
