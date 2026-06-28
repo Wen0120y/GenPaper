@@ -16,6 +16,7 @@ from openpyxl import load_workbook
 from msoffcrypto.format.ooxml import OOXMLFile
 import msoffcrypto
 import io
+import subprocess
 
 # ==================== Page Configuration ====================
 st.set_page_config(
@@ -342,6 +343,51 @@ def load_prompt_from_docx(filepath, fallback):
         return fallback
 
 
+def _git_commit_token_update():
+    """Best-effort git add + commit + push of user_keys.xlsx after token update."""
+    try:
+        excel_path = os.path.join(APP_DIR, "user_keys.xlsx")
+        repo_dir = APP_DIR
+
+        # Check if we are in a git repo
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=repo_dir, capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return  # Not a git repo
+
+        # Stage the Excel file
+        subprocess.run(
+            ["git", "add", "user_keys.xlsx"],
+            cwd=repo_dir, capture_output=True, timeout=10
+        )
+
+        # Check if there are changes to commit
+        diff_result = subprocess.run(
+            ["git", "diff", "--cached", "--quiet", "user_keys.xlsx"],
+            cwd=repo_dir, capture_output=True, timeout=10
+        )
+        if diff_result.returncode == 0:
+            return  # No changes
+
+        # Commit
+        from datetime import datetime
+        msg = f"Update token usage - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        subprocess.run(
+            ["git", "commit", "-m", msg],
+            cwd=repo_dir, capture_output=True, timeout=10
+        )
+
+        # Push (best-effort)
+        subprocess.run(
+            ["git", "push"],
+            cwd=repo_dir, capture_output=True, timeout=30
+        )
+    except Exception:
+        pass  # Silent failure - git sync is optional
+
+
 def load_user_key_credentials(user_key_input):
     """Look up a 10-digit user key in the password-protected Excel.
 
@@ -503,6 +549,10 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
             if usage and usage.total_tokens:
                 new_total = token_used + usage.total_tokens
                 update_token_usage(user_key, row_index, new_total)
+                # Update sidebar display
+                st.session_state["user_token_used"] = new_total
+                # Git auto-commit (best-effort, non-blocking)
+                _git_commit_token_update()
         except Exception:
             pass
 
@@ -674,6 +724,42 @@ with st.sidebar:
             help="Enter a 10-digit user key to use the internal API. Leave blank to use your own API Key below.",
         )
         st.session_state["user_key"] = user_key
+
+        # Validate user key and show token status
+        if user_key and len(str(user_key).strip()) == 10 and str(user_key).strip().isdigit():
+            uk_api, uk_url, uk_model, tok_limit, tok_used, _ = load_user_key_credentials(user_key)
+            if uk_api and tok_limit is not None:
+                st.session_state["user_key_valid"] = True
+                st.session_state["user_token_limit"] = tok_limit
+                st.session_state["user_token_used"] = tok_used
+                remaining = max(0, tok_limit - tok_used)
+                pct = (tok_used / tok_limit * 100) if tok_limit > 0 else 0
+                if pct >= 90:
+                    color = "#ef4444"
+                elif pct >= 50:
+                    color = "#f59e0b"
+                else:
+                    color = "#22c55e"
+                st.markdown(
+                    f'<p style="font-size:11px; color:{color}; margin:-8px 0 8px 0;">'
+                    f"Remaining: {remaining:,} / {tok_limit:,} tokens ({100-pct:.0f}%)"
+                    f"</p>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.session_state["user_key_valid"] = False
+                st.markdown(
+                    '<p style="font-size:11px; color:#ef4444; margin:-8px 0 8px 0;">'
+                    "Invalid User Key</p>",
+                    unsafe_allow_html=True,
+                )
+        elif user_key:
+            st.session_state["user_key_valid"] = False
+            st.markdown(
+                '<p style="font-size:11px; color:#ef4444; margin:-8px 0 8px 0;">'
+                "Key must be 10 digits</p>",
+                unsafe_allow_html=True,
+            )
 
         st.markdown(
             '<p style="font-size:11px; color:#94a3b8; margin:-10px 0 10px 0;">'
