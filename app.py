@@ -501,10 +501,15 @@ def update_token_usage(user_key_input, row_index, new_token_used):
             of_enc.encrypt(EXCEL_PASSWORD, encrypted_out)
             encrypted_out.seek(0)
             f.write(encrypted_out.read())
-    except Exception:
-        pass  # Silent failure on write-back; quota check still works in-memory
-
-
+    except Exception as e:
+        # Log write-back failures
+        try:
+            log_path = os.path.join(APP_DIR, "token_sync.log")
+            with open(log_path, "a", encoding="utf-8") as lf:
+                import datetime
+                lf.write(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] FAIL update_token_usage: {e}\n")
+        except Exception:
+            pass
 
 
 def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
@@ -793,6 +798,25 @@ with st.sidebar:
                 "Key must be 10 digits</p>",
                 unsafe_allow_html=True,
             )
+
+
+        # Check git sync status
+        git_log_path = os.path.join(APP_DIR, "git_sync.log")
+        git_warn = False
+        if os.path.exists(git_log_path):
+            try:
+                with open(git_log_path, "r", encoding="utf-8") as lf:
+                    lines = lf.readlines()
+                    if lines:
+                        last = lines[-1]
+                        if "FAIL" in last:
+                            git_warn = True
+                            st.warning(
+                                "GitHub sync may not be working. "
+                                "Check git_sync.log in the project folder."
+                            )
+            except Exception:
+                pass
 
         st.markdown(
             '<p style="font-size:11px; color:#94a3b8; margin:-10px 0 10px 0;">'
