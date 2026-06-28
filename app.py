@@ -344,48 +344,81 @@ def load_prompt_from_docx(filepath, fallback):
 
 
 def _git_commit_token_update():
-    """Best-effort git add + commit + push of user_keys.xlsx after token update."""
+    """Best-effort git add + commit + push of user_keys.xlsx after token update.
+
+    Writes status to git_sync.log in the project directory for debugging.
+    """
+    import datetime
+    log_path = os.path.join(APP_DIR, "git_sync.log")
+
+    def _log(msg):
+        try:
+            with open(log_path, "a", encoding="utf-8") as lf:
+                lf.write(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+        except Exception:
+            pass
+
     try:
         excel_path = os.path.join(APP_DIR, "user_keys.xlsx")
         repo_dir = APP_DIR
 
-        # Check if we are in a git repo
-        result = subprocess.run(
+        # Step 1: check git repo
+        r = subprocess.run(
             ["git", "rev-parse", "--git-dir"],
             cwd=repo_dir, capture_output=True, text=True, timeout=5
         )
-        if result.returncode != 0:
-            return  # Not a git repo
+        if r.returncode != 0:
+            _log("SKIP: not a git repository")
+            return
 
-        # Stage the Excel file
-        subprocess.run(
+        # Step 2: git add
+        r = subprocess.run(
             ["git", "add", "user_keys.xlsx"],
-            cwd=repo_dir, capture_output=True, timeout=10
+            cwd=repo_dir, capture_output=True, text=True, timeout=10
         )
+        if r.returncode != 0:
+            _log(f"FAIL git add: {r.stderr.strip()}")
+            return
 
-        # Check if there are changes to commit
-        diff_result = subprocess.run(
+        # Step 3: check if there are staged changes
+        r = subprocess.run(
             ["git", "diff", "--cached", "--quiet", "user_keys.xlsx"],
             cwd=repo_dir, capture_output=True, timeout=10
         )
-        if diff_result.returncode == 0:
-            return  # No changes
+        if r.returncode == 0:
+            _log("SKIP: no changes to commit")
+            return
 
-        # Commit
-        from datetime import datetime
-        msg = f"Update token usage - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        subprocess.run(
+        # Step 4: commit
+        msg = f"Update token usage - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        r = subprocess.run(
             ["git", "commit", "-m", msg],
-            cwd=repo_dir, capture_output=True, timeout=10
+            cwd=repo_dir, capture_output=True, text=True, timeout=10
         )
+        if r.returncode != 0:
+            _log(f"FAIL git commit: {r.stderr.strip()}")
+            return
+        _log(f"COMMIT: {msg}")
 
-        # Push (best-effort)
-        subprocess.run(
+        # Step 5: push
+        r = subprocess.run(
             ["git", "push"],
-            cwd=repo_dir, capture_output=True, timeout=30
+            cwd=repo_dir, capture_output=True, text=True, timeout=30
         )
-    except Exception:
-        pass  # Silent failure - git sync is optional
+        if r.returncode != 0:
+            _log(f"FAIL git push (rc={r.returncode}): {r.stderr.strip()[:200]}")
+            _log("HINT: Run 'git push' manually or configure credential.helper")
+            return
+        _log("PUSH: success")
+
+    except subprocess.TimeoutExpired:
+        _log("FAIL: git operation timed out")
+    except FileNotFoundError:
+        _log("FAIL: git command not found (is Git installed?)")
+    except Exception as e:
+        _log(f"FAIL: unexpected error - {e}")
+
+
 
 
 def load_user_key_credentials(user_key_input):
