@@ -13,6 +13,7 @@ import re
 from openai import OpenAI
 from docx import Document
 from openpyxl import load_workbook
+from msoffcrypto.format.ooxml import OOXMLFile
 import msoffcrypto
 import io
 
@@ -342,24 +343,23 @@ def load_prompt_from_docx(filepath, fallback):
 
 
 def load_user_key_credentials(user_key_input):
-    """Look up a 10-digit user key in the local password-protected Excel file.
+    """Look up a 10-digit user key in the password-protected Excel.
 
-    The Excel file is encrypted with password "980120".
-    Returns (api_key, base_url, model) if the key is found,
-    or (None, None, None) if not found / file missing.
+    Columns: user_key | api_key | base_url | model | token_limit | token_used
+    Returns (api_key, base_url, model, token_limit, token_used, row_index)
+    or (None,)*7 if not found.
     """
     excel_path = os.path.join(APP_DIR, "user_keys.xlsx")
     if not os.path.exists(excel_path):
-        return None, None, None
+        return None, None, None, None, None, None
 
     user_key_input = str(user_key_input).strip()
     if len(user_key_input) != 10 or not user_key_input.isdigit():
-        return None, None, None
+        return None, None, None, None, None, None
 
     EXCEL_PASSWORD = "980120"
 
     try:
-        # Decrypt the password-protected Excel into memory
         decrypted = io.BytesIO()
         with open(excel_path, "rb") as f:
             office_file = msoffcrypto.OfficeFile(f)
@@ -369,40 +369,95 @@ def load_user_key_credentials(user_key_input):
 
         wb = load_workbook(decrypted, read_only=True)
         ws = wb.active
+        row_idx = 2  # 1-based, skip header
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0] is None:
+                row_idx += 1
                 continue
             stored_key = str(row[0]).strip()
             if stored_key == user_key_input:
                 api_key = str(row[1]).strip() if row[1] else None
                 base_url = str(row[2]).strip() if row[2] else None
                 model = str(row[3]).strip() if len(row) > 3 and row[3] else None
+                token_limit = int(row[4]) if len(row) > 4 and row[4] is not None else 200000
+                token_used = int(row[5]) if len(row) > 5 and row[5] is not None else 0
                 wb.close()
-                return api_key, base_url, model
+                return api_key, base_url, model, token_limit, token_used, row_idx
+            row_idx += 1
         wb.close()
     except Exception:
         pass
-    return None, None, None
+    return None, None, None, None, None, None
+
+
+def update_token_usage(user_key_input, row_index, new_token_used):
+    """Write the updated token_used back to the encrypted Excel for a given key row."""
+    excel_path = os.path.join(APP_DIR, "user_keys.xlsx")
+    EXCEL_PASSWORD = "980120"
+
+    try:
+        # 1. Decrypt
+        decrypted = io.BytesIO()
+        with open(excel_path, "rb") as f:
+            office_file = msoffcrypto.OfficeFile(f)
+            office_file.load_key(password=EXCEL_PASSWORD)
+            office_file.decrypt(decrypted)
+        decrypted.seek(0)
+
+        # 2. Load (not read_only) and update
+        wb = load_workbook(decrypted)
+        ws = wb.active
+        ws.cell(row=row_index, column=6, value=new_token_used)  # column 6 = token_used
+
+        # 3. Save to BytesIO
+        saved = io.BytesIO()
+        wb.save(saved)
+        wb.close()
+        saved.seek(0)
+
+        # 4. Re-encrypt and write to disk
+        with open(excel_path, "wb") as f:
+            encrypted_out = io.BytesIO()
+            of_enc = OOXMLFile(saved)
+            of_enc.encrypt(EXCEL_PASSWORD, encrypted_out)
+            encrypted_out.seek(0)
+            f.write(encrypted_out.read())
+    except Exception:
+        pass  # Silent failure on write-back; quota check still works in-memory
 
 
 
 
 def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
-    """Invoke the LLM API with a 120-second timeout.
+    """Invoke the LLM API with quota check and token tracking.
 
-    Reads API credentials from st.session_state. Raises ValueError when
-    required configuration is missing.
+    Reads API credentials from st.session_state. Supports User Key override
+    with token quota enforcement. Raises ValueError when configuration is
+    missing or quota is exceeded.
     """
     # Check for user key override
     user_key = st.session_state.get("user_key", "").strip()
+    token_limit = None
+    token_used = None
+    row_index = None
+
     if user_key:
-        uk_api_key, uk_base_url, uk_model = load_user_key_credentials(user_key)
+        uk_api_key, uk_base_url, uk_model, token_limit, token_used, row_index = (
+            load_user_key_credentials(user_key)
+        )
         if uk_api_key:
             api_key = uk_api_key
             base_url = uk_base_url or "https://api.siliconflow.cn/v1"
             model = uk_model or "deepseek-ai/DeepSeek-V4-Pro"
+
+            # Quota check
+            if token_limit is not None and token_used is not None:
+                if token_used >= token_limit:
+                    raise ValueError(
+                        f"Token quota exhausted ({token_used:,}/{token_limit:,} tokens used). "
+                        "Please contact the administrator to increase your quota."
+                    )
         else:
-            # User key provided but invalid
             raise ValueError(
                 "Invalid User Key. Please check your 10-digit key or contact the administrator."
             )
@@ -418,7 +473,7 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
     if not model:
         raise ValueError("Please configure the Model Name in the sidebar.")
 
-    # 创建 HTTP 客户端，设置超时
+    # Create HTTP client with timeout
     import httpx
     http_client = httpx.Client(
         timeout=httpx.Timeout(120.0, connect=60.0),
@@ -438,11 +493,22 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
         ],
         temperature=0.7,
         max_tokens=4096,
-        # timeout 在这里设置，而不是在 OpenAI() 中
         timeout=httpx.Timeout(120.0, connect=60.0),
     )
 
+    # Update token usage for user-key users
+    if user_key and row_index is not None and token_used is not None:
+        try:
+            usage = response.usage
+            if usage and usage.total_tokens:
+                new_total = token_used + usage.total_tokens
+                update_token_usage(user_key, row_index, new_total)
+        except Exception:
+            pass
+
     return response.choices[0].message.content
+
+
 
 def parse_questions(raw_text):
     """Parse LLM output into structured question entries.
