@@ -7,6 +7,9 @@ and academic paper framework design.
 Dependencies: streamlit, openai, python-docx
 """
 
+import warnings
+warnings.filterwarnings("ignore", message=".*numexpr.*")
+warnings.filterwarnings("ignore", message=".*bottleneck.*")
 import streamlit as st
 import os
 import re
@@ -207,6 +210,7 @@ PROMPT_FILE_PAGE1 = os.path.join(APP_DIR, "prompts_page1.docx")
 PROMPT_FILE_PAGE2 = os.path.join(APP_DIR, "prompts_page2.docx")
 PROMPT_FILE_PAGE3 = os.path.join(APP_DIR, "prompts_page3.docx")
 PROMPT_FILE_PAGE4 = os.path.join(APP_DIR, "prompts_page4.docx")
+PROMPT_FILE_PAGE5 = os.path.join(APP_DIR, "prompts_page5.docx")
 
 # Default prompt templates (auto-created as .docx on first run)
 DEFAULT_PROMPT_PAGE1 = (
@@ -302,6 +306,24 @@ DEFAULT_PROMPT_PAGE4 = (
     "## Contact\n\n"
     "For questions or feedback, please reach out to the project maintainer."
 )
+DEFAULT_PROMPT_PAGE5 = (
+    "You are an academic publishing advisor. Based on the abstract below, "
+    "write a brief analysis (approximately 100 words, in English) covering:\n"
+    "1. What broad research field this work belongs to (1-2 disciplines).\n"
+    "2. Which research_major_direction might be relevant.\n"
+    "3. One practical tip for finding suitable journals in our database, "
+    "mentioning specific categories from the available columns: "
+    "Category (EN) and research_major_direction (specific research area).\n\n"
+    "Keep the tone helpful and concise. Do NOT list specific journal names.\n\n"
+    "Abstract: {abstract}"
+)
+
+
+
+
+
+
+
 
 
 
@@ -519,36 +541,39 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
     with token quota enforcement. Raises ValueError when configuration is
     missing or quota is exceeded.
     """
-    # Check for user key override
-    user_key = st.session_state.get("user_key", "").strip()
+    # API Key takes priority; User Key is fallback
+    api_key = st.session_state.get("api_key", "").strip()
+    base_url = st.session_state.get("base_url", "").strip()
+    model = st.session_state.get("model", "gpt-3.5-turbo").strip()
     token_limit = None
     token_used = None
     row_index = None
+    using_user_key = False
 
-    if user_key:
-        uk_api_key, uk_base_url, uk_model, token_limit, token_used, row_index = (
-            load_user_key_credentials(user_key)
-        )
-        if uk_api_key:
-            api_key = uk_api_key
-            base_url = uk_base_url or "https://api.siliconflow.cn/v1"
-            model = uk_model or "deepseek-ai/DeepSeek-V4-Pro"
-
-            # Quota check
-            if token_limit is not None and token_used is not None:
-                if token_used >= token_limit:
-                    raise ValueError(
-                        f"Token quota exhausted ({token_used:,}/{token_limit:,} tokens used). "
-                        "Please contact the administrator to increase your quota."
-                    )
-        else:
-            raise ValueError(
-                "Invalid User Key. Please check your 10-digit key or contact the administrator."
+    # If API Key is not set, try User Key
+    if not api_key:
+        user_key = st.session_state.get("user_key", "").strip()
+        if user_key:
+            uk_api_key, uk_base_url, uk_model, token_limit, token_used, row_index = (
+                load_user_key_credentials(user_key)
             )
-    else:
-        api_key = st.session_state.get("api_key", "").strip()
-        base_url = st.session_state.get("base_url", "").strip()
-        model = st.session_state.get("model", "gpt-3.5-turbo").strip()
+            if uk_api_key:
+                api_key = uk_api_key
+                base_url = uk_base_url or "https://api.siliconflow.cn/v1"
+                model = uk_model or "deepseek-ai/DeepSeek-V4-Pro"
+                using_user_key = True
+
+                # Quota check
+                if token_limit is not None and token_used is not None:
+                    if token_used >= token_limit:
+                        raise ValueError(
+                            f"Token quota exhausted ({token_used:,}/{token_limit:,} tokens used). "
+                            "Please contact the administrator to increase your quota."
+                        )
+            else:
+                raise ValueError(
+                    "Invalid User Key. Please check your 10-digit key or contact the administrator."
+                )
 
     if not api_key:
         raise ValueError("Please configure your API Key or User Key in the sidebar.")
@@ -581,7 +606,7 @@ def call_llm(prompt, system_prompt=SYSTEM_PROMPT):
     )
 
     # Update token usage for user-key users
-    if user_key and row_index is not None and token_used is not None:
+    if using_user_key and row_index is not None and token_used is not None:
         try:
             usage = response.usage
             if usage and usage.total_tokens:
@@ -718,6 +743,186 @@ def render_framework_markdown(md_text):
     return "\n".join(html_parts)
 
 
+# ==================== Journal Recommender Helpers ====================
+
+JOURNAL_HEADERS = [
+    "journal_id", "journal_name", "impact_factor", "citescore",
+    "xr_zone", "top", "category_en", "category",
+    "research_major_direction", "research_minor_direction",
+    "is_oa", "language", "publisher", "self_citation_rate",
+    "five_year_if", "h_index", "journal_intro", "website",
+    "research_direction", "country", "period", "pub_year",
+    "gold_oa_ratio", "research_article_ratio", "review_speed",
+    "acceptance_rate", "annual_articles", "citescore_detail",
+    "p_issn", "e_issn"
+]
+
+JOURNAL_DISPLAY_LABELS = {
+    "journal_id": "Journal ID",
+    "journal_name": "Journal Name",
+    "impact_factor": "Impact Factor",
+    "citescore": "CiteScore",
+    "xr_zone": "New Sharp Zone",
+    "top": "TOP",
+    "category_en": "Category (EN)",
+    "category": "Category",
+    "research_major_direction": "Major Research Direction",
+    "research_minor_direction": "Minor Research Direction",
+    "is_oa": "Open Access",
+    "language": "Language",
+    "publisher": "Publisher",
+    "self_citation_rate": "Self-citation Rate",
+    "five_year_if": "5-Year IF",
+    "h_index": "H-index",
+    "journal_intro": "Introduction",
+    "website": "Website",
+    "research_direction": "Research Direction",
+    "country": "Country",
+    "period": "Period",
+    "pub_year": "Publication Year",
+    "gold_oa_ratio": "Gold OA Ratio",
+    "research_article_ratio": "Research Article Ratio",
+    "review_speed": "Review Speed",
+    "acceptance_rate": "Acceptance Rate",
+    "annual_articles": "Annual Articles",
+    "citescore_detail": "CiteScore Detail",
+    "p_issn": "P-ISSN",
+    "e_issn": "E-ISSN",
+}
+
+FILTER_COLUMNS = {"category", "research_major_direction", "impact_factor", "citescore", "xr_zone", "top"}
+HEADER_COLUMNS = {"journal_name", "impact_factor", "xr_zone"}
+DISPLAY_COLUMNS = [h for h in JOURNAL_HEADERS if h not in HEADER_COLUMNS]
+
+
+def load_journal_data():
+    jdata_path = os.path.join(APP_DIR, "Jdata_with_cn_v1.xlsx")
+    wb = load_workbook(jdata_path, read_only=True)
+    ws = wb.active
+    journals = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row[8] is not None and str(row[8]).strip() != "":
+            d = {h: (row[i] if i < len(row) else None) for i, h in enumerate(JOURNAL_HEADERS)}
+            journals.append(d)
+    wb.close()
+    return journals
+
+
+def get_unique_values(journals, col):
+    """Get sorted unique non-null values for a column."""
+    vals = set()
+    for j in journals:
+        v = j.get(col)
+        if v is not None and str(v).strip() != "" and str(v).strip().lower() != "none":
+            vals.add(str(v).strip())
+    try:
+        return sorted(vals, key=lambda x: (
+            float(x) if x.replace(".", "").replace("-", "").lstrip("-").isdigit() else float("inf"), x
+        ))
+    except Exception:
+        return sorted(vals)
+
+def render_journal_results():
+    "Render journal list with independent filters and expandable rows."
+    journals_all = st.session_state.get("cached_journals", [])
+    if not journals_all:
+        st.info("Loading journal database ...")
+        with st.spinner("Loading journals ..."):
+            st.session_state["cached_journals"] = load_journal_data()
+        st.rerun()
+    if not journals_all:
+        st.info("Journal database not loaded. Please reload the page.")
+        return
+
+    all_cat_en = get_unique_values(journals_all, "category")
+    all_majors = get_unique_values(journals_all, "research_major_direction")
+    all_xr_zones = get_unique_values(journals_all, "xr_zone")
+
+    st.markdown("### Filter Journals")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        sel_cat = st.selectbox("Category", ["All"] + all_cat_en, key="page5_cat")
+    with c2:
+        sel_major = st.selectbox("Research Major Direction", ["All"] + all_majors, key="page5_major")
+
+    c3, c4, c5 = st.columns(3)
+    with c3:
+        sel_xr = st.selectbox("Zone", ["All"] + all_xr_zones, key="page5_xr")
+    with c4:
+        sel_top = st.selectbox("TOP", ["All", "Top"], key="page5_top")
+    with c5:
+        sort_options = ["IF: High to Low", "IF: Low to High", "CiteScore: High to Low", "CiteScore: Low to High"]
+        sel_sort = st.selectbox("Sort By", sort_options, key="page5_sort")
+
+    filtered = []
+    for j in journals_all:
+        if sel_cat != "All" and str(j.get("category") or "") != sel_cat:
+            continue
+        if sel_major != "All" and str(j.get("research_major_direction") or "") != sel_major:
+            continue
+        if sel_xr != "All" and str(j.get("xr_zone") or "") != sel_xr:
+            continue
+        if sel_top == "Top" and str(j.get("top") or "").strip().lower() != "top":
+            continue
+        filtered.append(j)
+
+    if "CiteScore" in sel_sort:
+        if "High to Low" in sel_sort:
+            filtered.sort(key=lambda x: -(x.get("citescore") or 0))
+        else:
+            filtered.sort(key=lambda x: (x.get("citescore") or 999999))
+    else:
+        if "High to Low" in sel_sort:
+            filtered.sort(key=lambda x: -(x.get("impact_factor") or 0))
+        else:
+            filtered.sort(key=lambda x: (x.get("impact_factor") or 999999))
+
+    PAGE_SIZE = 20
+    total_pages = max(1, (len(filtered) + PAGE_SIZE - 1) // PAGE_SIZE)
+    if "page5_page" not in st.session_state:
+        st.session_state["page5_page"] = 1
+    pg = st.session_state["page5_page"]
+    if pg > total_pages:
+        pg = total_pages
+        st.session_state["page5_page"] = pg
+    start_idx = (pg - 1) * PAGE_SIZE
+    end_idx = min(start_idx + PAGE_SIZE, len(filtered))
+
+    st.markdown("**Showing " + str(len(filtered)) + " journal(s) (Page " + str(pg) + " of " + str(total_pages) + ")**")
+
+    if not filtered:
+        st.info("No journals match the current filters. Try adjusting your selection.")
+        return
+
+    for j in filtered[start_idx:end_idx]:
+        name = str(j.get("journal_name") or "Unknown")
+        impact = j.get("impact_factor")
+        if_str = ("%.2f" % impact) if impact is not None else "N/A"
+        xr = j.get("xr_zone")
+        xr_str = (" | Zone " + str(xr)) if xr is not None else ""
+        label = name + " (IF: " + if_str + ")" + xr_str
+        with st.expander(label):
+            for col_key in DISPLAY_COLUMNS:
+                val = j.get(col_key)
+                if val is not None and str(val).strip() != "" and str(val).strip().lower() != "none":
+                    lbl = JOURNAL_DISPLAY_LABELS.get(col_key, col_key)
+                    if col_key == "website" and val:
+                        st.markdown("**" + lbl + ":** [" + str(val) + "](" + str(val) + ")")
+                    else:
+                        st.markdown("**" + lbl + ":** " + str(val))
+
+    if total_pages > 1:
+        pc1, pc2, pc3, pc4, pc5 = st.columns([1, 2, 1, 2, 1])
+        with pc2:
+            if st.button("< Previous", disabled=(pg <= 1), key="pg5_prev", use_container_width=True):
+                st.session_state["page5_page"] = max(1, pg - 1)
+                st.rerun()
+        with pc4:
+            if st.button("Next >", disabled=(pg >= total_pages), key="pg5_next", use_container_width=True):
+                st.session_state["page5_page"] = min(total_pages, pg + 1)
+                st.rerun()
+
 # ==================== Sidebar ====================
 with st.sidebar:
     # Hero-style branding — prominent site title
@@ -742,6 +947,7 @@ with st.sidebar:
     page = st.radio(
         "Navigation",
         [
+            "📋 Journal Recommender",
             "🔬 Scientific Question Synthesis",
             "📐 Framework Architect",
             "📝 Introduction Generator",
@@ -854,6 +1060,54 @@ with st.sidebar:
     st.markdown("---")
     st.caption("ACTA v1.0  ·  Research Assistant")
 
+
+# ==================== Page 5: Journal Recommender ====================
+if page == "\U0001f4cb Journal Recommender":
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-hero">\U0001f4cb Journal Recommender</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="page-tagline">Browse and filter journals by discipline, impact factor, and zone.</div>',
+        unsafe_allow_html=True,
+    )
+
+    abstract = st.text_area(
+        "Paper Abstract / Topic Description",
+        placeholder="Paste your paper abstract or describe your research topic. ACTA will analyze it and suggest relevant fields for journal selection.",
+        height=150,
+        key="journal_abstract_input",
+    )
+
+    col_left, col_right = st.columns([1, 2])
+    with col_left:
+        analyze_btn = st.button("Analyze", type="primary", use_container_width=True, key="journal_analyze_btn")
+
+    if analyze_btn:
+        if not abstract.strip():
+            st.warning("Please enter a paper abstract.")
+        else:
+            try:
+                with st.spinner("ACTA is analyzing your research ..."):
+                    prompt_template = load_prompt_from_docx(PROMPT_FILE_PAGE5, DEFAULT_PROMPT_PAGE5)
+                    final_prompt = prompt_template.replace("{abstract}", abstract.strip())
+                    advice = call_llm(final_prompt)
+                    st.session_state["page5_advice"] = advice
+                    st.session_state["page5_abstract"] = abstract.strip()
+            except ValueError as e:
+                st.error("Configuration Error: " + str(e))
+            except Exception as e:
+                st.error("Error: " + str(e))
+
+    if "page5_advice" in st.session_state:
+        st.markdown("---")
+        st.markdown("### Field Analysis and Advice")
+        st.info(st.session_state["page5_advice"])
+
+    st.markdown("---")
+
+    render_journal_results()
 
 # ==================== Page 1: Scientific Question Synthesis ====================
 if page == "🔬 Scientific Question Synthesis":
@@ -1000,7 +1254,7 @@ elif page == "📝 Introduction Generator":
             "real-time traffic flow prediction using graph neural networks "
             "and attention mechanisms..."
         ),
-        help="Provide a comprehensive description of your research topic (max ~500 words)",
+        help="Provide a comprehensive description of your research topic (max ~300 words)",
         max_chars=4000,
         height=200,
         key="topic_description_input",
