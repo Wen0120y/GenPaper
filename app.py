@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore", message=".*bottleneck.*")
 import streamlit as st
 import os
 import re
+import difflib
 from openai import OpenAI
 from docx import Document
 from openpyxl import load_workbook
@@ -822,8 +823,131 @@ def get_unique_values(journals, col):
     except Exception:
         return sorted(vals)
 
+
+def filter_journals_by_selection(journals, selections, skip_key=None):
+    """Filter journals by selected values, optionally skipping one filter key."""
+    filtered = []
+    for journal in journals:
+        keep = True
+        for key, selected_values in selections.items():
+            if key == skip_key or not selected_values:
+                continue
+            journal_value = str(journal.get(key) or "").strip()
+            if journal_value not in selected_values:
+                keep = False
+                break
+        if keep:
+            filtered.append(journal)
+    return filtered
+
+
+def normalize_filter_values(raw_value):
+    """Normalize a filter value into a clean list of strings."""
+    if isinstance(raw_value, str):
+        raw_value = [raw_value] if raw_value else []
+    elif raw_value is None:
+        raw_value = []
+    return [str(v).strip() for v in raw_value if str(v).strip()]
+
+
+def build_multiselect_options(options, selected_values):
+    """Keep selected values visible while showing current available options."""
+    merged = list(selected_values)
+    for option in options:
+        if option not in merged:
+            merged.append(option)
+    return merged
+
+
+def find_journal_matches(journals, query, limit=5):
+    """Return up to `limit` closest journal matches for a free-text query."""
+    query_norm = str(query or "").strip().lower()
+    if not query_norm:
+        return []
+
+    exact_matches = []
+    ranked_matches = []
+    for journal in journals:
+        name = str(journal.get("journal_name") or "").strip()
+        if not name:
+            continue
+        name_norm = name.lower()
+        if name_norm == query_norm:
+            exact_matches.append(journal)
+            continue
+        score = difflib.SequenceMatcher(None, query_norm, name_norm).ratio()
+        if query_norm in name_norm:
+            score += 0.35
+        if name_norm.startswith(query_norm):
+            score += 0.25
+        if score > 0.2:
+            ranked_matches.append((score, name, journal))
+
+    if exact_matches:
+        return exact_matches[:1]
+
+    ranked_matches.sort(key=lambda item: (-item[0], item[1].lower()))
+    return [journal for _, _, journal in ranked_matches[:limit]]
+
+
+def render_journal_entries(journals):
+    """Render journal rows as expandable entries."""
+    for j in journals:
+        name = str(j.get("journal_name") or "Unknown")
+        impact = j.get("impact_factor")
+        if_str = ("%.2f" % impact) if impact is not None else "N/A"
+        xr = j.get("xr_zone")
+        xr_str = (" | 新锐分区 " + str(xr)) if xr is not None else ""
+        label = name + " (IF: " + if_str + ")" + xr_str
+        with st.expander(label):
+            for col_key in DISPLAY_COLUMNS:
+                val = j.get(col_key)
+                if val is not None and str(val).strip() != "" and str(val).strip().lower() != "none":
+                    lbl = JOURNAL_DISPLAY_LABELS.get(col_key, col_key)
+                    if col_key == "website" and val:
+                        st.markdown("**" + lbl + ":** [" + str(val) + "](" + str(val) + ")")
+                    else:
+                        st.markdown("**" + lbl + ":** " + str(val))
+
+
+def prune_journal_filter_chain(journals, filter_specs, selections):
+    """Prune staged filter selections and compute downstream options."""
+    pruned = {}
+    options_map = {}
+    current_pool = journals
+    for data_key, _, _ in filter_specs:
+        options = get_unique_values(current_pool, data_key)
+        valid_selected = [value for value in selections.get(data_key, []) if value in options]
+        pruned[data_key] = valid_selected
+        options_map[data_key] = build_multiselect_options(options, valid_selected)
+        if valid_selected:
+            current_pool = filter_journals_by_selection(current_pool, {data_key: valid_selected})
+    return pruned, options_map
+
+
+def apply_journal_filter_stage(stage_key):
+    """Commit one filter stage and prune only downstream stages."""
+    filter_specs = st.session_state.get("page5_filter_specs", [])
+    journals_all = st.session_state.get("cached_journals", [])
+    if not filter_specs or not journals_all:
+        return
+
+    current_filters = st.session_state.get("page5_filters", {})
+    selections = {
+        data_key: normalize_filter_values(current_filters.get(data_key, []))
+        for data_key, _, _ in filter_specs
+    }
+    widget_key = "page5_" + stage_key + "_widget"
+    selections[stage_key] = normalize_filter_values(st.session_state.get(widget_key, []))
+
+    pruned, _ = prune_journal_filter_chain(journals_all, filter_specs, selections)
+    st.session_state["page5_filters"] = pruned
+    for data_key, _, _ in filter_specs:
+        st.session_state["page5_" + data_key + "_widget"] = list(pruned[data_key])
+    st.session_state["page5_page"] = 1
+
 def render_journal_results():
-    "Render journal list with independent filters and expandable rows."
+    "Render journal list with linked multi-select filters and expandable rows."
     journals_all = st.session_state.get("cached_journals", [])
     if not journals_all:
         st.info("Loading journal database ...")
@@ -834,38 +958,127 @@ def render_journal_results():
         st.info("Journal database not loaded. Please reload the page.")
         return
 
-    all_cat_en = get_unique_values(journals_all, "category")
-    all_majors = get_unique_values(journals_all, "research_major_direction")
-    all_xr_zones = get_unique_values(journals_all, "xr_zone")
+    filter_specs = [
+        ("category", "Category", "page5_cat"),
+        ("research_major_direction", "Research Major Direction", "page5_major"),
+        ("xr_zone", "新锐分区", "page5_xr"),
+        ("top", "TOP", "page5_top"),
+    ]
+    st.session_state["page5_filter_specs"] = filter_specs
+    if "page5_filters" not in st.session_state:
+        st.session_state["page5_filters"] = {data_key: [] for data_key, _, _ in filter_specs}
 
-    st.markdown("### Filter Journals")
+    stored_filters = st.session_state["page5_filters"]
+    selections = {data_key: normalize_filter_values(stored_filters.get(data_key, [])) for data_key, _, _ in filter_specs}
+
+    title_col, mode_col = st.columns([2.3, 1.7])
+    with title_col:
+        st.markdown("### Filter Journals")
+    with mode_col:
+        search_mode = st.radio(
+            "Search Mode",
+            ["Category Search", "Journal Search"],
+            key="page5_search_mode",
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+    if search_mode == "Journal Search":
+        journal_query = st.text_input(
+            "Journal Name",
+            key="page5_journal_query",
+            placeholder="Type a journal name",
+        )
+        if not str(journal_query or "").strip():
+            st.info("Enter a journal name to search for the closest match.")
+            return
+
+        journal_matches = find_journal_matches(journals_all, journal_query, limit=5)
+        if not journal_matches:
+            st.info("No journal match found.")
+            return
+
+        st.markdown("**Showing " + str(len(journal_matches)) + " journal match(es)**")
+        render_journal_entries(journal_matches)
+        return
+
+    applied_selections, filter_options = prune_journal_filter_chain(journals_all, filter_specs, selections)
+    if applied_selections != selections:
+        st.session_state["page5_filters"] = applied_selections
+        selections = applied_selections
+    else:
+        selections = applied_selections
+
+    for data_key, _, _ in filter_specs:
+        widget_key = "page5_" + data_key + "_widget"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = list(selections[data_key])
+        elif normalize_filter_values(st.session_state.get(widget_key, [])) != selections[data_key]:
+            st.session_state[widget_key] = list(selections[data_key])
 
     c1, c2 = st.columns(2)
     with c1:
-        sel_cat = st.selectbox("Category", ["All"] + all_cat_en, key="page5_cat")
+        sel_cat = st.multiselect(
+            "Category",
+            filter_options["category"],
+            key="page5_category_widget",
+            on_change=apply_journal_filter_stage,
+            args=("category",),
+        )
     with c2:
-        sel_major = st.selectbox("Research Major Direction", ["All"] + all_majors, key="page5_major")
+        sel_major = st.multiselect(
+            "Research Major Direction",
+            filter_options["research_major_direction"],
+            key="page5_research_major_direction_widget",
+            on_change=apply_journal_filter_stage,
+            args=("research_major_direction",),
+        )
 
     c3, c4, c5 = st.columns(3)
     with c3:
-        sel_xr = st.selectbox("Zone", ["All"] + all_xr_zones, key="page5_xr")
+        sel_xr = st.multiselect(
+            "新锐分区",
+            filter_options["xr_zone"],
+            key="page5_xr_zone_widget",
+            on_change=apply_journal_filter_stage,
+            args=("xr_zone",),
+        )
     with c4:
-        sel_top = st.selectbox("TOP", ["All", "Top"], key="page5_top")
+        sel_top = st.multiselect(
+            "TOP",
+            filter_options["top"],
+            key="page5_top_widget",
+            on_change=apply_journal_filter_stage,
+            args=("top",),
+        )
     with c5:
         sort_options = ["IF: High to Low", "IF: Low to High", "CiteScore: High to Low", "CiteScore: Low to High"]
         sel_sort = st.selectbox("Sort By", sort_options, key="page5_sort")
 
-    filtered = []
-    for j in journals_all:
-        if sel_cat != "All" and str(j.get("category") or "") != sel_cat:
-            continue
-        if sel_major != "All" and str(j.get("research_major_direction") or "") != sel_major:
-            continue
-        if sel_xr != "All" and str(j.get("xr_zone") or "") != sel_xr:
-            continue
-        if sel_top == "Top" and str(j.get("top") or "").strip().lower() != "top":
-            continue
-        filtered.append(j)
+    sel_cat = selections["category"]
+    sel_major = selections["research_major_direction"]
+    sel_xr = selections["xr_zone"]
+    sel_top = selections["top"]
+
+    current_signature = (
+        tuple(sorted(sel_cat)),
+        tuple(sorted(sel_major)),
+        tuple(sorted(sel_xr)),
+        tuple(sorted(sel_top)),
+    )
+    if st.session_state.get("page5_filter_signature") != current_signature:
+        st.session_state["page5_filter_signature"] = current_signature
+        st.session_state["page5_page"] = 1
+
+    filtered = filter_journals_by_selection(
+        journals_all,
+        {
+            "category": sel_cat,
+            "research_major_direction": sel_major,
+            "xr_zone": sel_xr,
+            "top": sel_top,
+        },
+    )
 
     if "CiteScore" in sel_sort:
         if "High to Low" in sel_sort:
@@ -895,22 +1108,7 @@ def render_journal_results():
         st.info("No journals match the current filters. Try adjusting your selection.")
         return
 
-    for j in filtered[start_idx:end_idx]:
-        name = str(j.get("journal_name") or "Unknown")
-        impact = j.get("impact_factor")
-        if_str = ("%.2f" % impact) if impact is not None else "N/A"
-        xr = j.get("xr_zone")
-        xr_str = (" | Zone " + str(xr)) if xr is not None else ""
-        label = name + " (IF: " + if_str + ")" + xr_str
-        with st.expander(label):
-            for col_key in DISPLAY_COLUMNS:
-                val = j.get(col_key)
-                if val is not None and str(val).strip() != "" and str(val).strip().lower() != "none":
-                    lbl = JOURNAL_DISPLAY_LABELS.get(col_key, col_key)
-                    if col_key == "website" and val:
-                        st.markdown("**" + lbl + ":** [" + str(val) + "](" + str(val) + ")")
-                    else:
-                        st.markdown("**" + lbl + ":** " + str(val))
+    render_journal_entries(filtered[start_idx:end_idx])
 
     if total_pages > 1:
         pc1, pc2, pc3, pc4, pc5 = st.columns([1, 2, 1, 2, 1])
