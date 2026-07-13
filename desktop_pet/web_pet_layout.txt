@@ -1,0 +1,44 @@
+# Web pet layout config.
+# Edit values, save, then refresh Streamlit.
+# If desktop_pet/web_pet_layout.xlsx exists, the xlsx file takes priority.
+#
+# Text format:
+# key=value
+#
+# Excel format:
+# column A = key, column B = value
+
+# Floating component area size and position from browser bottom-right.
+frame_width=440
+frame_height=450
+frame_right=10
+frame_bottom=10
+
+# Pet position inside the component area.
+pet_left=280
+pet_top=280
+pet_scale=0.8
+pet_base_width=160
+pet_base_height=176
+
+# Speech bubble position and width inside the component area.
+speech_right=28
+speech_top=250
+speech_min_width=190
+speech_max_width=220
+quip_interval_ms=10000
+quip_request_timeout_ms=8000
+quip_fallback_enabled=1
+
+# QA panel position and size inside the component area.
+qa_left=120
+qa_top=0
+qa_initial_width=230
+qa_final_width=250
+# qa_width remains supported for old configs; if set alone, it controls both initial and final width.
+qa_width=230
+qa_log_height=180
+qa_padding=10
+qa_font_size=12
+qa_button_width=34
+qa_gap=6
