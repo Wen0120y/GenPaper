@@ -26,8 +26,8 @@ speech_right=28
 speech_top=250
 speech_min_width=190
 speech_max_width=220
-quip_interval_ms=10000
-quip_request_timeout_ms=8000
+quip_interval_ms=20000
+quip_request_timeout_ms=10000
 quip_fallback_enabled=1
 
 # QA panel position and size inside the component area.
