@@ -331,18 +331,40 @@ def render_web_pet():
     except Exception:
         return
 
+    manual_api_key = st.session_state.get("api_key", "").strip()
+    user_key_api_key = st.session_state.get("user_key_api_key", "").strip()
+    if manual_api_key:
+        effective_api_key = manual_api_key
+        effective_base_url = (
+            st.session_state.get("base_url", "").strip()
+            or "https://api.siliconflow.cn/v1"
+        )
+        effective_model = (
+            st.session_state.get("model", "").strip()
+            or "deepseek-ai/DeepSeek-V4-Pro"
+        )
+    else:
+        effective_api_key = user_key_api_key
+        effective_base_url = (
+            st.session_state.get("user_key_base_url", "").strip()
+            or st.session_state.get("base_url", "").strip()
+            or "https://api.siliconflow.cn/v1"
+        )
+        effective_model = (
+            st.session_state.get("user_key_model", "").strip()
+            or st.session_state.get("model", "").strip()
+            or "deepseek-ai/DeepSeek-V4-Pro"
+        )
+
     pet_config = {
         "sprite": "data:image/webp;base64," + sprite_data,
         "metadata": metadata,
         "layout": load_web_pet_layout(),
         "actaUrl": ACTA_URL,
-        "apiKey": st.session_state.get("api_key", "").strip(),
-        "baseUrl": st.session_state.get("base_url", "https://api.siliconflow.cn/v1").strip(),
-        "model": st.session_state.get("model", "deepseek-ai/DeepSeek-V4-Pro").strip(),
-        "apiEnabled": bool(
-            st.session_state.get("api_key", "").strip()
-            or st.session_state.get("user_key_valid")
-        ),
+        "apiKey": effective_api_key,
+        "baseUrl": effective_base_url,
+        "model": effective_model,
+        "apiEnabled": bool(effective_api_key),
     }
 
     html = """
@@ -1528,7 +1550,7 @@ def render_web_pet():
 """
     components.html(
         html.replace("__PET_CONFIG__", json.dumps(pet_config)).replace(
-            "<script>", "<!-- acta-web-pet-v15 -->\n<script>"
+            "<script>", "<!-- acta-web-pet-v16 -->\n<script>"
         ),
         height=1,
     )
@@ -2896,26 +2918,33 @@ with st.sidebar:
         # Validate user key and show token status
         if user_key and len(str(user_key).strip()) == 10 and str(user_key).strip().isdigit():
             uk_api, uk_url, uk_model, tok_limit, tok_used, _ = load_user_key_credentials(user_key)
-            if uk_api and tok_limit is not None:
+            if uk_api:
                 st.session_state["user_key_valid"] = True
+                st.session_state["user_key_api_key"] = uk_api
+                st.session_state["user_key_base_url"] = uk_url or "https://api.siliconflow.cn/v1"
+                st.session_state["user_key_model"] = uk_model or "deepseek-ai/DeepSeek-V4-Pro"
                 st.session_state["user_token_limit"] = tok_limit
                 st.session_state["user_token_used"] = tok_used
-                remaining = max(0, tok_limit - tok_used)
-                pct = (tok_used / tok_limit * 100) if tok_limit > 0 else 0
-                if pct >= 90:
-                    color = "#ef4444"
-                elif pct >= 50:
-                    color = "#f59e0b"
-                else:
-                    color = "#22c55e"
-                st.markdown(
-                    f'<p style="font-size:11px; color:{color}; margin:-8px 0 8px 0;">'
-                    f"Remaining: {remaining:,} / {tok_limit:,} tokens ({100-pct:.0f}%)"
-                    f"</p>",
-                    unsafe_allow_html=True,
-                )
+                if tok_limit is not None and tok_used is not None:
+                    remaining = max(0, tok_limit - tok_used)
+                    pct = (tok_used / tok_limit * 100) if tok_limit > 0 else 0
+                    if pct >= 90:
+                        color = "#ef4444"
+                    elif pct >= 50:
+                        color = "#f59e0b"
+                    else:
+                        color = "#22c55e"
+                    st.markdown(
+                        f'<p style="font-size:11px; color:{color}; margin:-8px 0 8px 0;">'
+                        f"Remaining: {remaining:,} / {tok_limit:,} tokens ({100-pct:.0f}%)"
+                        f"</p>",
+                        unsafe_allow_html=True,
+                    )
             else:
                 st.session_state["user_key_valid"] = False
+                st.session_state["user_key_api_key"] = ""
+                st.session_state["user_key_base_url"] = ""
+                st.session_state["user_key_model"] = ""
                 st.markdown(
                     '<p style="font-size:11px; color:#ef4444; margin:-8px 0 8px 0;">'
                     "Invalid User Key</p>",
@@ -2923,11 +2952,19 @@ with st.sidebar:
                 )
         elif user_key:
             st.session_state["user_key_valid"] = False
+            st.session_state["user_key_api_key"] = ""
+            st.session_state["user_key_base_url"] = ""
+            st.session_state["user_key_model"] = ""
             st.markdown(
                 '<p style="font-size:11px; color:#ef4444; margin:-8px 0 8px 0;">'
                 "Key must be 10 digits</p>",
                 unsafe_allow_html=True,
             )
+        else:
+            st.session_state["user_key_valid"] = False
+            st.session_state["user_key_api_key"] = ""
+            st.session_state["user_key_base_url"] = ""
+            st.session_state["user_key_model"] = ""
 
 
         # Check git sync status
