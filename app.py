@@ -25,6 +25,7 @@ from msoffcrypto.format.ooxml import OOXMLFile
 import msoffcrypto
 import io
 import subprocess
+from PIL import Image
 
 # ==================== Page Configuration ====================
 st.set_page_config(
@@ -217,6 +218,25 @@ PROMPT_FILE_PAGE3 = os.path.join(APP_DIR, "prompts_page3.docx")
 PROMPT_FILE_PAGE4 = os.path.join(APP_DIR, "prompts_page4.docx")
 PROMPT_FILE_PAGE5 = os.path.join(APP_DIR, "prompts_page5.docx")
 PET_DIR = os.path.join(APP_DIR, "desktop_pet")
+
+
+def make_qr_data_uri(image_path, min_source_px=720):
+    """Return a crisp, high-resolution data URI for QR display."""
+    with Image.open(image_path) as image:
+        qr_image = image.convert("RGB")
+        longest_side = max(qr_image.size)
+        if longest_side < min_source_px:
+            scale = math.ceil(min_source_px / longest_side)
+            qr_image = qr_image.resize(
+                (qr_image.width * scale, qr_image.height * scale),
+                Image.Resampling.NEAREST,
+            )
+
+        buffer = io.BytesIO()
+        qr_image.save(buffer, format="PNG", optimize=True)
+
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return "data:image/png;base64," + encoded
 PET_SPRITESHEET = os.path.join(PET_DIR, "spritesheet.webp")
 PET_VALIDATION = os.path.join(PET_DIR, "validation.json")
 PET_LAYOUT_TXT = os.path.join(PET_DIR, "web_pet_layout.txt")
@@ -3331,7 +3351,16 @@ elif page == "ℹ️ About ACTA":
             unsafe_allow_html=True,
         )
         for qr_path in qr_paths:
-            st.image(qr_path, width=180)
+            qr_src = make_qr_data_uri(qr_path)
+            st.markdown(
+                '<div style="display:flex; justify-content:center; '
+                'align-items:center; width:100%; margin:18px 0 10px;">'
+                '<img src="' + qr_src + '" alt="ACTA QR code" '
+                'style="width:min(320px, 82vw); height:auto; '
+                'image-rendering:pixelated; image-rendering:crisp-edges;" />'
+                '</div>',
+                unsafe_allow_html=True,
+            )
     else:
         st.markdown(
             '<p style="text-align:center; color:#94a3b8; '
